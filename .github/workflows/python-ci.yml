@@ -1,0 +1,118 @@
+# Reusable quality gate for every ecosystem package.
+# Call from a repo with:
+#   jobs:
+#     ci:
+#       uses: engineering-mathematics/.github/.github/workflows/python-ci.yml@main
+name: Python CI (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        description: JSON list of Python versions for the test matrix
+        type: string
+        default: '["3.11", "3.12", "3.13"]'
+      operating-systems:
+        description: JSON list of runner OS labels (BLAS/LAPACK differ per OS, so test all three)
+        type: string
+        default: '["ubuntu-latest", "macos-latest", "windows-latest"]'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_LOCKED: "1"          # fail if uv.lock is out of date: builds must be reproducible
+  PYTHONHASHSEED: "0"
+  FORCE_COLOR: "1"
+
+jobs:
+  lint:
+    name: Lint, types, architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with: { enable-cache: true }
+      - run: uv sync --python 3.11
+      - name: ruff (lint)
+        run: uv run ruff check . --output-format=github
+      - name: ruff (format)
+        run: uv run ruff format --check .
+      - name: mypy --strict
+        run: uv run mypy
+      - name: import-linter (public-API boundaries)
+        run: uv run lint-imports
+
+  test:
+    name: Test (py${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.operating-systems) }}
+        python: ${{ fromJSON(inputs.python-versions) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with: { enable-cache: true }
+      - run: uv sync --python ${{ matrix.python }}
+      - name: pytest (coverage gate is enforced from pyproject.toml)
+        run: uv run pytest
+
+  lowest-deps:
+    name: Test against lowest declared dependency versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      # Catches under-declared lower bounds: the lockfile is intentionally not used here.
+      - run: uv run --python 3.11 --isolated --resolution lowest-direct pytest --no-cov
+        env: { UV_LOCKED: "0" }
+
+  build:
+    name: Build and verify distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --python 3.11
+      - run: uv build
+      - name: twine check (metadata renders and is valid)
+        run: uv run twine check --strict dist/*
+      - name: Wheel must not ship a namespace __init__.py
+        run: |
+          if unzip -l dist/*.whl | grep -E ' engg_math/__init__\.py$'; then
+            echo "::error::wheel contains engg_math/__init__.py; the namespace must stay implicit (PEP 420)"
+            exit 1
+          fi
+      - name: Wheel installs and imports in a clean environment
+        run: |
+          uv venv --python 3.11 /tmp/clean-env
+          uv pip install --python /tmp/clean-env/bin/python dist/*.whl
+          /tmp/clean-env/bin/python -c "import importlib.metadata as m, sys; d=[x for x in m.distributions() if (x.metadata['Name'] or '').startswith('engg-math-')]; sys.exit(0 if d else 1)"
+
+  audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --python 3.11
+      - name: pip-audit against the locked runtime dependency set
+        run: |
+          uv export --locked --no-dev --no-emit-project --format requirements-txt -o /tmp/runtime-reqs.txt
+          uv run pip-audit --strict --disable-pip --no-deps -r /tmp/runtime-reqs.txt

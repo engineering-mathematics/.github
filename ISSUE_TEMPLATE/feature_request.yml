@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose a capability
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What engineering task is hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API / behaviour
+  - type: textarea
+    id: verification
+    attributes:
+      label: How would we verify it?
+      description: Reference solutions, invariants, standards.
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - Single package
+        - Cross-package (needs RFC)
+        - New package
+    validations:
+      required: true
