@@ -1,11 +1,10 @@
-# The reusable workflows here gate every repo in the org, so they are linted on every change.
+# Required check for this repo: runs on every PR so docs-only PRs can merge.
 name: Lint workflows
 
 on:
   push:
     branches: [main]
   pull_request:
-    paths: [".github/workflows/**"]
 
 permissions:
   contents: read
