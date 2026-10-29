@@ -42,9 +42,19 @@ audit, CodeQL and a packaging check. A PR merges only when all of them are green
 - **Docs and changelog.** Public changes update the docstring and `CHANGELOG.md` under *Unreleased*.
 - **Small PRs.** One logical change; squash-merged; Conventional Commit title (`feat(solvers): ...`).
 
-## Commits and signing
+## Commits
 
-Conventional Commits. Commits must be signed (`git config commit.gpgsign true`); unsigned commits cannot merge.
+Conventional Commits; PRs are squash-merged (GitHub signs the merge commit).
+
+## Authorship policy
+
+Submit only work you wrote and can defend in review. Tool-generated changes you did not understand are rejected.
+CI fails PRs whose commits or description carry AI attribution (`Co-Authored-By` trailers, "Generated with ..." lines).
+That check detects declared attribution only; reviewers judge the rest.
+
+## Licence
+
+Apache-2.0. Contributions are licensed under the same terms (Apache-2.0 §5).
 
 ## Reporting problems
 

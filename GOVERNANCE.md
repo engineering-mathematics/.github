@@ -23,7 +23,7 @@ Team repos have exclusive write access for their team. Everyone else contributes
 
 Applied to every repo (via org rulesets) before its first release:
 
-- `main` is protected: no direct pushes, no force-push, no deletion; linear history; signed commits.
+- `main` is protected: no direct pushes, no force-push, no deletion; linear history; signed commits; squash-merge only (GitHub signs the merge commit).
 - Pull request required; CODEOWNER review required; stale approvals dismissed on new commits.
 - Required status checks: every job of the reusable `python-ci` workflow, plus `security`.
 - Secret scanning and push protection on; Dependabot alerts and security updates on; private vulnerability reporting on.

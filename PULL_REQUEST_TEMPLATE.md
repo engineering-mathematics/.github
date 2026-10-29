@@ -20,4 +20,9 @@
 
 <!-- Benchmarks before/after, accuracy vs a reference, or "none". -->
 
+## Authorship
+
+- [ ] I wrote and understand every change and can explain it in review
+- [ ] No AI attribution in commits or this description (CI rejects it)
+
 ## Notes for reviewers

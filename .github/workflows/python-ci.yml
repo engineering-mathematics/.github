@@ -1,5 +1,4 @@
-# Reusable quality gate for every ecosystem package.
-# Call from a repo with:
+# Reusable quality gate for every package repo.
 #   jobs:
 #     ci:
 #       uses: engineering-mathematics/.github/.github/workflows/python-ci.yml@main
@@ -9,13 +8,27 @@ on:
   workflow_call:
     inputs:
       python-versions:
-        description: JSON list of Python versions for the test matrix
         type: string
         default: '["3.11", "3.12", "3.13"]'
       operating-systems:
-        description: JSON list of runner OS labels (BLAS/LAPACK differ per OS, so test all three)
         type: string
         default: '["ubuntu-latest", "macos-latest", "windows-latest"]'
+      sync-args:
+        description: Extra `uv sync`/`uv run` args, e.g. `--all-packages` for a workspace.
+        type: string
+        default: ""
+      build-args:
+        description: Args for `uv build`, e.g. `--all-packages`.
+        type: string
+        default: ""
+      export-args:
+        description: Args for `uv export` in the audit job.
+        type: string
+        default: ""
+      forbid-ai-attribution:
+        description: Fail PRs whose commits or body carry AI attribution.
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -25,11 +38,40 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  UV_LOCKED: "1"          # fail if uv.lock is out of date: builds must be reproducible
+  UV_LOCKED: "1"
   PYTHONHASHSEED: "0"
   FORCE_COLOR: "1"
 
 jobs:
+  commit-policy:
+    name: Commit policy
+    # Internal repos are exempt.
+    if: >-
+      github.event_name == 'pull_request' && inputs.forbid-ai-attribution &&
+      !contains(fromJSON('[".github", ".github-private", "roadmap", "package-template"]'), github.event.repository.name)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reject AI attribution in commits and PR text
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          pattern='co-authored-by:[^\n]*(claude|anthropic|copilot|chatgpt|openai|codex|cursor|devin|gemini|codeium|tabnine|aider|windsurf)|generated (with|by)[^\n]*(claude|copilot|chatgpt|codex|cursor|gemini|devin|windsurf)|noreply@anthropic\.com|copilot-swe-agent|🤖'
+          text="$(git log --format='%an <%ae>%n%cn <%ce>%n%B' "$BASE_SHA..$HEAD_SHA")"
+          text="$text"$'\n'"$PR_TITLE"$'\n'"$PR_BODY"
+          if printf '%s' "$text" | grep -Eiq "$pattern"; then
+            echo "::error::AI attribution found in commits or PR text. Remove it; see CONTRIBUTING.md."
+            printf '%s' "$text" | grep -Ein "$pattern" | head -5
+            exit 1
+          fi
+
   lint:
     name: Lint, types, architecture
     runs-on: ubuntu-latest
@@ -39,15 +81,11 @@ jobs:
         with: { persist-credentials: false }
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with: { enable-cache: true }
-      - run: uv sync --python 3.11
-      - name: ruff (lint)
-        run: uv run ruff check . --output-format=github
-      - name: ruff (format)
-        run: uv run ruff format --check .
-      - name: mypy --strict
-        run: uv run mypy
-      - name: import-linter (public-API boundaries)
-        run: uv run lint-imports
+      - run: uv sync --python 3.11 ${{ inputs.sync-args }}
+      - run: uv run ruff check . --output-format=github
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run lint-imports
 
   test:
     name: Test (py${{ matrix.python }}, ${{ matrix.os }})
@@ -63,9 +101,8 @@ jobs:
         with: { persist-credentials: false }
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with: { enable-cache: true }
-      - run: uv sync --python ${{ matrix.python }}
-      - name: pytest (coverage gate is enforced from pyproject.toml)
-        run: uv run pytest
+      - run: uv sync --python ${{ matrix.python }} ${{ inputs.sync-args }}
+      - run: uv run pytest
 
   lowest-deps:
     name: Test against lowest declared dependency versions
@@ -75,8 +112,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      # Catches under-declared lower bounds: the lockfile is intentionally not used here.
-      - run: uv run --python 3.11 --isolated --resolution lowest-direct pytest --no-cov
+      - run: uv run --python 3.11 --isolated --resolution lowest-direct ${{ inputs.sync-args }} pytest --no-cov
         env: { UV_LOCKED: "0" }
 
   build:
@@ -87,21 +123,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      - run: uv sync --python 3.11
-      - run: uv build
-      - name: twine check (metadata renders and is valid)
-        run: uv run twine check --strict dist/*
-      - name: Wheel must not ship a namespace __init__.py
+      - run: uv sync --python 3.11 ${{ inputs.sync-args }}
+      - run: uv build ${{ inputs.build-args }}
+      - run: uv run twine check --strict dist/*
+      - name: No wheel may ship engg_math/__init__.py
         run: |
-          if unzip -l dist/*.whl | grep -E ' engg_math/__init__\.py$'; then
-            echo "::error::wheel contains engg_math/__init__.py; the namespace must stay implicit (PEP 420)"
-            exit 1
-          fi
-      - name: Wheel installs and imports in a clean environment
+          for w in dist/*.whl; do
+            if unzip -l "$w" | grep -E ' engg_math/__init__\.py$'; then
+              echo "::error::$w ships engg_math/__init__.py; the namespace must stay implicit (PEP 420)"
+              exit 1
+            fi
+          done
+      - name: Wheels install and import in a clean env
         run: |
           uv venv --python 3.11 /tmp/clean-env
           uv pip install --python /tmp/clean-env/bin/python dist/*.whl
-          /tmp/clean-env/bin/python -c "import importlib.metadata as m, sys; d=[x for x in m.distributions() if (x.metadata['Name'] or '').startswith('engg-math-')]; sys.exit(0 if d else 1)"
+          /tmp/clean-env/bin/python -c "import importlib.metadata as m, sys; sys.exit(0 if any((d.metadata['Name'] or '').startswith('engg-math-') for d in m.distributions()) else 1)"
 
   audit:
     name: Dependency vulnerability audit
@@ -111,8 +148,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      - run: uv sync --python 3.11
-      - name: pip-audit against the locked runtime dependency set
+      - run: uv sync --python 3.11 ${{ inputs.sync-args }}
+      - name: pip-audit on the locked runtime set
         run: |
-          uv export --locked --no-dev --no-emit-project --format requirements-txt -o /tmp/runtime-reqs.txt
+          uv export --locked --no-dev --no-emit-project ${{ inputs.export-args }} --format requirements-txt -o /tmp/runtime-reqs.txt
           uv run pip-audit --strict --disable-pip --no-deps -r /tmp/runtime-reqs.txt
