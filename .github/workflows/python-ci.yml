@@ -144,7 +144,7 @@ jobs:
         run: |
           uv venv --python 3.11 /tmp/clean-env
           if [ "${{ inputs.clean-env-from-lock }}" = "true" ]; then
-            uv export --locked --no-dev --no-hashes --no-emit-project ${{ inputs.export-args }} -o /tmp/clean-reqs.txt
+            uv export --locked --no-dev --no-hashes --no-emit-project -o /tmp/clean-reqs.txt
             uv pip install --python /tmp/clean-env/bin/python -r /tmp/clean-reqs.txt
           fi
           uv pip install --python /tmp/clean-env/bin/python dist/*.whl
