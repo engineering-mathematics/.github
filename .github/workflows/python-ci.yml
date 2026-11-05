@@ -25,6 +25,12 @@ on:
         description: Args for `uv export` in the audit job.
         type: string
         default: ""
+      clean-env-from-lock:
+        description: >-
+          Install the locked runtime set (`uv export`) into the clean env before the wheel. For repos
+          whose engg-math dependencies are git sources because they are not yet on PyPI; drop once published.
+        type: boolean
+        default: false
       forbid-ai-attribution:
         description: Fail PRs whose commits or body carry AI attribution.
         type: boolean
@@ -137,6 +143,10 @@ jobs:
       - name: Wheels install and import in a clean env
         run: |
           uv venv --python 3.11 /tmp/clean-env
+          if [ "${{ inputs.clean-env-from-lock }}" = "true" ]; then
+            uv export --locked --no-dev --no-hashes --no-emit-project ${{ inputs.export-args }} -o /tmp/clean-reqs.txt
+            uv pip install --python /tmp/clean-env/bin/python -r /tmp/clean-reqs.txt
+          fi
           uv pip install --python /tmp/clean-env/bin/python dist/*.whl
           /tmp/clean-env/bin/python -c "import importlib.metadata as m, sys; sys.exit(0 if any((d.metadata['Name'] or '').startswith('engg-math-') for d in m.distributions()) else 1)"
 
